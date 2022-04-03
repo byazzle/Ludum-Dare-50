@@ -19,6 +19,7 @@ public class WanderingDestinationSetter : MonoBehaviour
         var point = Random.insideUnitSphere * radius;
 
         // TODO: Check that the point is within our bounds
+
         point.z = 0;
         point += ai.position;
         return point;
@@ -34,5 +35,11 @@ public class WanderingDestinationSetter : MonoBehaviour
             ai.destination = PickRandomPoint();
             ai.SearchPath();
         }
+    }
+
+    void OnDisable()
+    {
+        // End the current path
+        ai.destination = transform.position;
     }
 }

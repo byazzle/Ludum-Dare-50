@@ -8,7 +8,7 @@ public class DragAndDrop : MonoBehaviour
 {
     [SerializeField]
     private InputAction mouseClick;
-    private float _mouseDragSpeed = .1f;
+    private float _mouseDragSpeed = .01f;
 
     private Camera _cam;
     private Vector2 velocity;
@@ -32,7 +32,6 @@ public class DragAndDrop : MonoBehaviour
         Ray ray = _cam.ScreenPointToRay(Mouse.current.position.ReadValue());
 
         RaycastHit2D hit = Physics2D.GetRayIntersection(ray);
-        Debug.Log(hit);
         if (hit.collider != null && hit.collider.gameObject.GetComponent<IDrag>() != null)
         {
             StartCoroutine(DragUpdate(hit.collider.gameObject));

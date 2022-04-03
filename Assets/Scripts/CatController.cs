@@ -1,6 +1,11 @@
+using System.IO;
+using System.ComponentModel;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.SceneManagement;
+using System;
+using Random = UnityEngine.Random;
 
 public class CatController : MonoBehaviour
 {
@@ -8,6 +13,7 @@ public class CatController : MonoBehaviour
     // Movement and state
     protected StateMachine _stateMachine;
     public WanderingDestinationSetter _wanderingDestinationSetter;
+    public Pathfinding.AIDestinationSetter targetDestinationSetter;
     private DragCat dragStatus;
 
     public SpriteRenderer renderer;
@@ -22,21 +28,40 @@ public class CatController : MonoBehaviour
     public float fallsAsleepAt = 20f;
     public float hunger = 0f;
     public float getsHungryAt = 4f;
+    public CatController adversary = null;
     public Dictionary<CatController, float> friends;
+
+    public Rigidbody2D rb;
+
+    public SpriteRenderer warningIcon;
+
+    public Pathfinding.IAstarAI ai;
+
+    public float timeToNextMeow = 0f;
 
     void Awake()
     {
+        friends = new Dictionary<CatController, float>();
         dragStatus = GetComponent<DragCat>();
+        rb = GetComponent<Rigidbody2D>();
+        ai = GetComponent<Pathfinding.IAstarAI>();
 
-        // Set the cat's name
-        catName = GetRandomName();
-        // Set the cat's colour
-        catColor = Random.ColorHSV();
+        ShowWarning(false);
+
+        // Set the cat's name if one isn't supplied
+        if (catName == "" || catName == null)
+        {
+            catName = GetRandomName();
+            // Same with the cat's colour
+            catColor = Random.ColorHSV();
+        }
+
         renderer.color = catColor;
         // TODO: Add some patches/spots/etc
 
         fallsAsleepAt = Random.Range(3f, 20f);
         getsHungryAt = Random.Range(3f, 20f);
+
 
         SetupStateMachine();
     }
@@ -51,29 +76,35 @@ public class CatController : MonoBehaviour
         var asleep = new Asleep(this);
         var wandering = new Wandering(this);
         var pickedUp = new PickedUp(this);
+        var hunting = new Hunting(this);
         // var lookForFood = new LookForFood(this);
         // var eat = new Eat(this);
         // var play = new Play(this);
         // var patrolTerritory = new PatrolTerritory(this);
-        // var pickedUp = new PickedUp(this);
         // var findWarmSpot = new FindWarmSpot(this);
 
 
-        // Set state transitions (note last value takes a function that returns a bool)
-        _stateMachine.AddTransition(wandering, pickedUp, () => dragStatus.isDragged); // Have we picked up the cat?
-        _stateMachine.AddTransition(asleep, wandering, () => sleepiness <= 0); // if find player - move towards the player
-        _stateMachine.AddTransition(wandering, asleep, () => sleepiness >= fallsAsleepAt); // Is the little kitty to tired?
+        // Set state transitions 
+        // Have we picked up our kitty?
+        _stateMachine.AddTransition(wandering, pickedUp, () => dragStatus.isDragged);
+        _stateMachine.AddTransition(asleep, pickedUp, () => dragStatus.isDragged);
+        _stateMachine.AddTransition(hunting, pickedUp, () => dragStatus.isDragged);
+
+        // Go back to wandering when we put the cat down
         _stateMachine.AddTransition(pickedUp, wandering, () => !dragStatus.isDragged); // Did we put it back down?
 
-        // _stateMachine.AddTransition(findFood,wanderTerritory,() => this.TargetPlayer != null); // if find player - move towards the player
-        // _stateMachine.AddTransition(wanderTerritory, dickAround, () => this._isIdle); //
-        // _stateMachine.AddTransition(dickAround, findFood, () => !this._isIdle);
-        // _stateMachine.AddTransition(wanderTerritory,findFood,() => this.TargetPlayer == null); // return to hunting for player if player disappears
-        // _stateMachine.AddTransition(wanderTerritory,distracted,() => this._inAttackRange); // attack player if move into attack range
-        // _stateMachine.AddTransition(distracted, findFood, () => this.TargetPlayer == null || !this._inAttackRange); // if player leaves range,  re-evaluate player location
+        // We've woken up!
+        _stateMachine.AddTransition(asleep, wandering, () => sleepiness <= 0);
 
-        _stateMachine.SetState(wandering); // Set initial/starting state
+        // Do we have an adversary to fight?
+        _stateMachine.AddTransition(wandering, hunting, () => adversary != null);
+        _stateMachine.AddTransition(hunting, wandering, () => adversary == null);
 
+        // Kitty's tired :3
+        _stateMachine.AddTransition(wandering, asleep, () => sleepiness >= fallsAsleepAt);
+
+        // Set initial/starting state
+        _stateMachine.SetState(wandering);
     }
 
     public IState GetCurrentState()
@@ -81,7 +112,35 @@ public class CatController : MonoBehaviour
         return _stateMachine.GetCurrentState();
     }
 
-
+    public void ShowWarning(bool isVisible)
+    {
+        warningIcon.enabled = isVisible;
+    }
+    public void AddAdversary(CatController adversary)
+    {
+        // Can't fight itself
+        if (this.adversary == null && adversary != this)
+        {
+            this.adversary = adversary;
+            Debug.Log(adversary.catName + " has become " + catName + "'s adversary");
+        }
+    }
+    public void RemoveAdversary()
+    {
+        if (adversary != null)
+        {
+            adversary = null;
+            Debug.Log(catName + " no longer has an adversary");
+        }
+    }
+    public void RemoveAdversary(CatController adversary)
+    {
+        if (this.adversary == adversary)
+        {
+            this.adversary = null;
+            Debug.Log(adversary.catName + " is no longer " + catName + "'s adversary");
+        }
+    }
     public void AddFriendliness(float friendliness, CatController cat)
     {
         // Add the cat if it doesn't already exist
@@ -94,6 +153,51 @@ public class CatController : MonoBehaviour
             friends.Add(cat, friendliness);
         }
 
+        // If we like that cat now, remove them if they're an adversary
+        if (IsFriends(cat))
+        {
+            RemoveAdversary(cat);
+        }
+
+    }
+    public bool IsFriends(CatController testCat)
+    {
+        // Add any missing friend values
+        if (!friends.ContainsKey(testCat))
+            AddFriendliness(0f, testCat);
+
+        return friends[testCat] / 10 >= 1;
+    }
+
+    void OnTriggerEnter2D(Collider2D other)
+    {
+        Debug.Log("Collided with " + other);
+        CatController otherCat = other.gameObject.GetComponent<CatController>();
+        if (otherCat != null)
+        {
+            if (adversary == otherCat)
+            {
+                CatManager.cat1 = adversary.catName;
+                CatManager.cat2 = catName;
+                // TODO: Make this a coroutine to show the fighting and lock out player control
+                SceneManager.LoadScene("GameOver");
+            }
+        }
+    }
+
+    void Update()
+    {
+        animator.SetFloat("Horizontal", ai.velocity.x);
+        animator.SetFloat("Vertical", ai.velocity.y);
+        animator.SetFloat("Speed", Vector3.Distance(Vector3.zero, ai.velocity));
+
+        // Randomly meow
+        timeToNextMeow -= Time.deltaTime;
+        if (timeToNextMeow <= 0f)
+        {
+            SoundManager.instance.Play("Meow" + Math.Ceiling(Random.Range(0f, 9f)).ToString());
+            timeToNextMeow = Random.Range(2f, 8f);
+        }
     }
 
     protected void FixedUpdate()
